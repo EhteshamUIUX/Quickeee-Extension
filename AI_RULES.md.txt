@@ -1,0 +1,169 @@
+# AI Development Rules
+
+## Project
+
+Quickeeee Price Intelligence
+
+## Objective
+
+Maintain and improve this Chrome Extension.
+
+Never redesign the project unless explicitly asked.
+
+Always preserve the current architecture.
+
+---
+
+## Before making changes
+
+Read the existing code first.
+
+Understand the data flow.
+
+Modify only the necessary files.
+
+Do not rewrite working modules.
+
+Do not rename files unless requested.
+
+---
+
+## Code Rules
+
+Never create mock data.
+
+Never create fallback products.
+
+Never hardcode prices.
+
+Never hardcode brands.
+
+Always use real Quickeeee API data.
+
+Always use real SerpAPI responses.
+
+If extraction fails,
+show an error.
+
+Never substitute another product.
+
+---
+
+## Performance
+
+Reuse existing functions.
+
+Avoid duplicate API calls.
+
+Avoid duplicate image downloads.
+
+Keep React renders minimal.
+
+Keep memory usage low.
+
+---
+
+## UI
+
+Keep current design.
+
+Don't redesign components.
+
+Don't change colors.
+
+Don't change layout.
+
+Only add requested features.
+
+---
+
+## Build
+
+After every modification:
+
+Run
+
+npm run build
+
+Do not finish until build succeeds.
+
+---
+
+## Testing
+
+If adding a feature:
+
+Verify old features still work.
+
+Never break:
+
+- Extraction
+- Search History
+- Coupon Engine
+- CSV Export
+- JSON Export
+- Price Comparison
+
+---
+
+## Git Style
+
+Small commits.
+
+Small changes.
+
+Minimal diff.
+
+Avoid touching unrelated files.
+
+---
+
+## Response Style
+
+Do not explain the whole project again.
+
+Do not rewrite existing files.
+
+Only show:
+
+- files changed
+- reason
+- build result
+
+Keep responses short.
+
+---
+
+## Architecture
+
+Chrome Extension MV3
+
+React
+
+TypeScript
+
+Chrome Storage
+
+Quickeeee Catalog API
+
+SerpAPI Google Lens
+
+OffscreenCanvas
+
+Visual Matching
+
+Coupon Engine
+
+Search History
+
+---
+
+## Future
+
+Keep architecture compatible with:
+
+- Daily Scanner
+- Competitor Alerts
+- Dashboard
+- Email Reports
+- Price Analytics

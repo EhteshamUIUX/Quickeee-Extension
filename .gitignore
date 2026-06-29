@@ -1,0 +1,25 @@
+# ---- Node / extension ----
+node_modules/
+dist/
+*.log
+
+# ---- Secrets / env ----
+.env
+backend/.env
+
+# ---- Python backend ----
+backend/.venv/
+**/__pycache__/
+*.py[cod]
+backend/.pytest_cache/
+backend/.ruff_cache/
+
+# ---- Runtime data (downloaded thumbnails) ----
+backend/data/images/*
+!backend/data/images/.gitkeep
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+.env

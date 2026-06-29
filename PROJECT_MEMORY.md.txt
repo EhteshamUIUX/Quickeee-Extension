@@ -1,0 +1,85 @@
+# PROJECT MEMORY - QUICKEEEE PRICE INTELLIGENCE
+
+Project Name:
+Quickeeee Price Intelligence
+
+Purpose:
+Internal Chrome Extension for Quickeeee that compares product prices with competitors using image-based matching.
+
+Stack:
+- Chrome Extension (MV3)
+- React
+- TypeScript
+- Chrome Side Panel
+- Chrome Storage
+- Quickeeee Catalog API
+- SerpAPI (Google Lens)
+- OffscreenCanvas image hashing
+
+Current Workflow:
+1. Detect Quickeeee product page.
+2. Extract product from Quickeeee API.
+3. Get:
+   - Title
+   - Brand
+   - Original Price
+   - Coupon Price (if available)
+   - Product Image
+4. Send image to SerpAPI Google Lens.
+5. Receive marketplace matches.
+6. Verify image similarity.
+7. Compare prices.
+8. Display comparison.
+
+Implemented Features:
+✅ Quickeeee extraction
+✅ Google Lens integration
+✅ Visual verification
+✅ Competitor comparison
+✅ Coupon-aware pricing
+✅ Search history
+✅ CSV export
+✅ JSON export
+
+Coupon Logic:
+Always compare competitors against the effective Quickeeee price after coupon.
+
+Example:
+Original: ₹4399
+Coupon: ₹3519
+Comparison should use ₹3519.
+
+Search History:
+Store every search in chrome.storage.local.
+
+Fields:
+- Product
+- Brand
+- Date
+- Quickeeee Price
+- Coupon Price
+- Competitor Prices
+- Cheapest Platform
+
+History Views:
+- Today
+- Last 7 Days
+- Last 30 Days
+- All Time
+
+Rules:
+- Never use mock data.
+- Never return fallback products.
+- Never rewrite working modules.
+- Modify only required files.
+- Preserve architecture.
+- Build after every change.
+- npm run build must pass.
+
+Future Roadmap:
+- Daily automated scanning
+- 10,000 products/day
+- Competitor alerts
+- Dashboard
+- Analytics
+- Email reports
