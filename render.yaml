@@ -1,0 +1,34 @@
+# Render Blueprint for the Quickeee discovery backend (SerpApi proxy).
+# Repo root is this folder; the FastAPI app lives in ./backend.
+#
+# Deploy: Render dashboard -> New -> Blueprint -> pick this repo. Render reads
+# this file, creates the service, and prompts for the secrets marked sync:false.
+services:
+  - type: web
+    name: quickeee-discovery-backend
+    runtime: python
+    rootDir: backend
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.8"
+      - key: APP_ENV
+        value: production
+      - key: MOCK_MODE
+        value: "false"
+      # Extensions with host_permissions bypass CORS, but "*" also lets you test
+      # via the /docs page from a browser.
+      - key: CORS_ORIGINS
+        value: "*"
+      # ---- Secrets: fill these in the Render dashboard (not committed) ----
+      # SerpApi key that powers competitor discovery.
+      - key: SERPAPI_KEY
+        sync: false
+      # Your Neon connection string. The app runs Base.metadata.create_all on
+      # startup, so it WON'T START without a reachable database.
+      # e.g. postgresql://user:pass@ep-xxx.aws.neon.tech/dbname?sslmode=require
+      - key: DATABASE_URL
+        sync: false
