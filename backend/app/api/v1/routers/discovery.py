@@ -42,19 +42,20 @@ class DiscoverResponse(BaseModel):
 
 @router.post("", response_model=DiscoverResponse)
 async def discover(payload: DiscoverRequest) -> DiscoverResponse:
-    if not settings.serpapi_key:
+    active = settings.active_search_provider
+    if active == "none":
         return DiscoverResponse(
             query=payload.query,
             count=0,
             provider="none",
-            error="SERPAPI_KEY is not configured on the backend (.env).",
+            error="No search provider key configured. Set SERPER_KEY or SERPAPI_KEY.",
             results=[],
         )
     results = await discover_competitors(payload.query, payload.image_url)
     return DiscoverResponse(
         query=payload.query,
         count=len(results),
-        provider="serpapi",
+        provider=active,
         error=None,
         results=[CompetitorListing(**r) for r in results],
     )

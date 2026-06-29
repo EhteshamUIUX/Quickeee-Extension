@@ -97,6 +97,37 @@ async def _name_search(query: str) -> list[dict]:
     return out
 
 
+async def _serper_name_search(query: str) -> list[dict]:
+    """Google Shopping via Serper.dev — 2,500 free searches/month."""
+    out: list[dict] = []
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://google.serper.dev/shopping",
+                headers={"X-API-KEY": settings.serper_key, "Content-Type": "application/json"},
+                json={"q": query, "gl": "in", "hl": "en", "num": 20},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+    except Exception as exc:
+        logger.warning("serper shopping failed: %s", exc)
+        return out
+    for m in data.get("shopping", []) or []:
+        url = m.get("link") or ""
+        if not url and not m.get("title"):
+            continue
+        out.append({
+            "platform": _platform(url, m.get("source")),
+            "title": m.get("title") or "",
+            "url": url,
+            "price": _price(m.get("price")),  # "₹8,999" — _price() strips non-digit chars
+            "image": m.get("imageUrl"),
+            "source": "shopping",
+            "_id": None,  # no product_id; dedup falls back to URL
+        })
+    return out
+
+
 async def _image_search(image_url: str) -> list[dict]:
     out: list[dict] = []
     try:
@@ -125,9 +156,19 @@ async def _image_search(image_url: str) -> list[dict]:
 
 async def discover(query: str, image_url: Optional[str] = None, limit: int = 24) -> list[dict]:
     """Discover competitor listings via search APIs. No mock fallback."""
-    listings = await _name_search(query)
+    provider = settings.active_search_provider
+    if provider == "serper":
+        listings = await _serper_name_search(query)
+    elif provider == "serpapi":
+        listings = await _name_search(query)
+    else:
+        listings = []
+
     if image_url:
-        listings += await _image_search(image_url)
+        if settings.serpapi_key:
+            listings += await _image_search(image_url)
+        else:
+            logger.info("image_url supplied but SERPAPI_KEY absent — skipping lens search")
 
     # De-duplicate: shopping rows key on product_id (their URLs share a base);
     # image rows key on canonical URL. Preserve order, drop title-less rows.

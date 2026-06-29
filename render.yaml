@@ -24,9 +24,18 @@ services:
       - key: CORS_ORIGINS
         value: "*"
       # ---- Secrets: fill these in the Render dashboard (not committed) ----
-      # SerpApi key that powers competitor discovery.
+      # Serper.dev key — Google Shopping, 2,500 free searches/month (preferred).
+      # Sign up at serper.dev to get a free key.
+      - key: SERPER_KEY
+        sync: false
+      # SerpApi key — only needed for Google Lens (reverse-image search).
+      # Optional if you don't use image_url in discovery requests.
       - key: SERPAPI_KEY
         sync: false
+      # Controls which provider runs Shopping search.
+      # "auto" picks serper if SERPER_KEY is set, else falls back to serpapi.
+      - key: SEARCH_PROVIDER
+        value: "auto"
       # Your Neon connection string. The app runs Base.metadata.create_all on
       # startup, so it WON'T START without a reachable database.
       # e.g. postgresql://user:pass@ep-xxx.aws.neon.tech/dbname?sslmode=require

@@ -63,6 +63,18 @@ class Settings(BaseSettings):
     bing_visual_search_key: str = ""  # Azure Bing Visual Search (fallback)
     visual_search_provider: Literal["serpapi", "playwright", "bing"] = "serpapi"
 
+    # ---- Shopping search provider (name-based competitor discovery) ----
+    # Serper.dev: 2,500 free searches/month (vs SerpApi's 250).
+    serper_key: str = Field(
+        default="",
+        validation_alias=AliasChoices("SERPER_KEY", "SERPER_API_KEY"),
+    )
+    # "auto" picks serper if SERPER_KEY is set, else falls back to serpapi.
+    search_provider: Literal["serper", "serpapi", "auto"] = Field(
+        default="auto",
+        validation_alias=AliasChoices("SEARCH_PROVIDER"),
+    )
+
     # ---- Scraping / browser ----
     mock_mode: bool = True  # run end-to-end offline with deterministic fixtures
     headless: bool = True
@@ -76,6 +88,19 @@ class Settings(BaseSettings):
     # ---- Image storage ----
     image_store_dir: str = "./data/images"
     perceptual_hash_size: int = 16
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def active_search_provider(self) -> str:
+        if self.search_provider == "serper":
+            return "serper"
+        if self.search_provider == "serpapi":
+            return "serpapi"
+        if self.serper_key:
+            return "serper"
+        if self.serpapi_key:
+            return "serpapi"
+        return "none"
 
     @computed_field  # type: ignore[prop-decorator]
     @property
