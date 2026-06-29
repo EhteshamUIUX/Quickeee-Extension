@@ -24,6 +24,10 @@ import type { MatchScores } from "./types";
 
 export const ACCEPT_THRESHOLD = 90;
 export const MODEL_GATE = 60;
+// Apparel / generic products carry no SKU and no model number. For them the
+// model signal is meaningless, so acceptance gates on brand identity + this
+// much descriptive title overlap instead of the model-dominant rule.
+export const APPAREL_TITLE_GATE = 60;
 const W = { model: 0.4, title: 0.3, brand: 0.2, image: 0.1 };
 
 const GENERIC = new Set([
@@ -136,7 +140,14 @@ export function scoreCompetitor(
   const hasSku = a.skus.size > 0;
   const identityConfirmed = !hasSku || skuFamilyMatch || brandPresent;
 
-  const accepted = overall >= ACCEPT_THRESHOLD && model >= MODEL_GATE && identityConfirmed;
+  // SKU/model products (shoes, watches) use the strict model-dominant rule.
+  // Apparel/generic products (no SKU AND no model number) instead require the
+  // brand in the competitor title + enough descriptive overlap — marketplace
+  // titles word the same garment too differently for the model score to work.
+  const hasIdentifier = a.skus.size > 0 || a.nums.size > 0;
+  const accepted = hasIdentifier
+    ? overall >= ACCEPT_THRESHOLD && model >= MODEL_GATE && identityConfirmed
+    : brandPresent && title >= APPAREL_TITLE_GATE;
 
   return { model, title, brand: brandScore, image, overall, accepted, identityConfirmed };
 }
