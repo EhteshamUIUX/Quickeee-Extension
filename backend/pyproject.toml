@@ -1,0 +1,13 @@
+[project]
+name = "quickeee-visual-agent"
+version = "1.0.0"
+description = "Visual-matching-first price comparison agent for Quickeee"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
