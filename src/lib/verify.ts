@@ -26,8 +26,11 @@ export const ACCEPT_THRESHOLD = 90;
 export const MODEL_GATE = 60;
 // Apparel / generic products carry no SKU and no model number. For them the
 // model signal is meaningless, so acceptance gates on brand identity + this
-// much descriptive title overlap instead of the model-dominant rule.
-export const APPAREL_TITLE_GATE = 60;
+// much descriptive title overlap instead of the model-dominant rule. Kept
+// moderate (not high) because source titles carry marketing/colour/fabric
+// words competitors omit (e.g. "Elevated … Olive Viscose"), which deflates
+// overlap for genuine same-line matches. Tune up if false matches appear.
+export const APPAREL_TITLE_GATE = 50;
 const W = { model: 0.4, title: 0.3, brand: 0.2, image: 0.1 };
 
 const GENERIC = new Set([
