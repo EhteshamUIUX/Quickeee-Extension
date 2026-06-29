@@ -112,18 +112,31 @@ async def _serper_name_search(query: str) -> list[dict]:
     except Exception as exc:
         logger.warning("serper shopping failed: %s", exc)
         return out
-    for m in data.get("shopping", []) or []:
-        url = m.get("link") or ""
-        if not url and not m.get("title"):
+    items = data.get("shopping", []) or []
+    logger.info("serper shopping raw=%d for %r", len(items), query)
+    for i, m in enumerate(items):
+        url = m.get("link") or m.get("productLink") or ""
+        title = m.get("title") or ""
+        if not url and not title:
             continue
+        # Dedup key MUST be unique per row: Serper rows often have an empty
+        # `link`, so keying on URL would collapse every empty-link row into one.
+        # Prefer productId, then title, then position.
+        pid = m.get("productId") or m.get("product_id")
+        if pid:
+            _id = f"sid:{pid}"
+        elif title:
+            _id = f"st:{title[:80].lower()}"
+        else:
+            _id = f"sp:{i}"
         out.append({
             "platform": _platform(url, m.get("source")),
-            "title": m.get("title") or "",
+            "title": title,
             "url": url,
             "price": _price(m.get("price")),  # "₹8,999" — _price() strips non-digit chars
             "image": m.get("imageUrl"),
             "source": "shopping",
-            "_id": None,  # no product_id; dedup falls back to URL
+            "_id": _id,
         })
     return out
 
