@@ -165,10 +165,33 @@ export function PriceComparison({
               {rejected.map((m, i) => (
                 <div key={i} className="rounded-xl bg-white p-2.5 text-xs shadow-card ring-1 ring-slate-100">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold uppercase tracking-wide text-slate-500">{m.platform}</span>
+                    {m.url ? (
+                      <a
+                        href={m.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-bold uppercase tracking-wide text-slate-500 hover:text-brand-600 hover:underline"
+                      >
+                        {m.platform}
+                      </a>
+                    ) : (
+                      <span className="font-bold uppercase tracking-wide text-slate-500">{m.platform}</span>
+                    )}
                     <span className="badge bg-rose-100 text-rose-600">{m.scores.overall}%</span>
                   </div>
-                  <div className="truncate text-ink" title={m.title}>{m.title}</div>
+                  {m.url ? (
+                    <a
+                      href={m.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="block truncate text-ink hover:text-brand-600 hover:underline"
+                      title={m.title}
+                    >
+                      {m.title}
+                    </a>
+                  ) : (
+                    <div className="truncate text-ink" title={m.title}>{m.title}</div>
+                  )}
                   <div className="mt-0.5 text-[10px] text-slate-400">
                     model {m.scores.model} · title {m.scores.title} · brand {m.scores.brand} · image{" "}
                     {m.scores.image ?? "n/a"}
