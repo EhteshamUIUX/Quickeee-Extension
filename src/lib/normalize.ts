@@ -18,13 +18,20 @@ export function normalizeProduct(p: QuickeeeProduct): NormalizedProduct {
   // number returns listings that actually contain the model, making verification work.
   // Detect: brand is a prefix AND the remainder is purely alphanumeric+hyphens (no spaces).
   let search_query: string;
+  let model_number: string | null = null;
+
   if (brand && modelHasBrand) {
     const afterBrand = model.slice(brand.length).trim();
     const isPureModelNum = /^[A-Z0-9][A-Z0-9-]{3,}$/i.test(afterBrand);
-    search_query = isPureModelNum ? afterBrand : model;
+    if (isPureModelNum) {
+      search_query = afterBrand;
+      model_number = afterBrand;
+    } else {
+      search_query = model;
+    }
   } else {
     search_query = brand && !modelHasBrand ? `${brand} ${model}` : model;
   }
 
-  return { brand, model, search_query: search_query.replace(/\s+/g, " ").trim() };
+  return { brand, model, model_number, search_query: search_query.replace(/\s+/g, " ").trim() };
 }

@@ -39,6 +39,8 @@ export interface PageSignals {
 export interface NormalizedProduct {
   brand: string | null;
   model: string;
+  /** Pure model number extracted from title (e.g. "MTP-1302PD-3AVEF"), null for descriptive titles. */
+  model_number: string | null;
   search_query: string;
 }
 
@@ -59,6 +61,7 @@ export interface DiscoverResult {
   provider: string; // "serpapi" | "none"
   error: string | null;
   results: CompetitorListing[];
+  queries_executed?: string[]; // all search queries that were run (multi-query mode)
 }
 
 /** Phase 3 — per-match sub-scores (each 0..100). */

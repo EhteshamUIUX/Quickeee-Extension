@@ -167,27 +167,81 @@ async def _image_search(image_url: str) -> list[dict]:
     return out
 
 
-async def discover(query: str, image_url: Optional[str] = None, limit: int = 24) -> list[dict]:
-    """Discover competitor listings via search APIs. No mock fallback."""
+def _build_queries(query: str, brand: Optional[str], model_number: Optional[str]) -> list[str]:
+    """Generate up to 4 distinct search queries for better model-number product coverage.
+
+    For pure-model products (e.g. brand="CASIO", model_number="MTP-1302PD-3AVEF"):
+      Q1 "MTP-1302PD-3AVEF"              — most targeted, finds exact-model listings
+      Q2 "CASIO MTP-1302PD-3AVEF"        — brand-scoped, avoids cross-brand noise
+      Q3 same as Q1 or Q2 → deduped out
+      Q4 deduped out (nothing left after removing model + brand from query)
+
+    For descriptive titles with no extracted model_number: only Q3 (the full query) runs,
+    preserving the current single-query behaviour and Serper API quota.
+    """
+    queries: list[str] = []
+    seen: set[str] = set()
+
+    def add(q: str) -> None:
+        q = " ".join(q.split())  # collapse whitespace
+        if q and len(q) >= 2 and q not in seen:
+            seen.add(q)
+            queries.append(q)
+
+    # Q1: model number alone — returns listings that actually contain the model
+    if model_number:
+        add(model_number)
+
+    # Q2: brand + model number — narrows results to the correct manufacturer
+    if brand and model_number:
+        add(f"{brand} {model_number}")
+
+    # Q3: full original query (deduped if already added above)
+    add(query)
+
+    # Q4: brand + cleaned title (remove model number tokens from query for a category search)
+    if brand and model_number:
+        cleaned = query.replace(model_number, "").replace(brand, "").strip(" -,")
+        cleaned = " ".join(cleaned.split())
+        if len(cleaned) >= 3:
+            add(f"{brand} {cleaned}")
+
+    return queries
+
+
+async def discover(
+    query: str,
+    image_url: Optional[str] = None,
+    brand: Optional[str] = None,
+    model_number: Optional[str] = None,
+    limit: int = 24,
+) -> dict:
+    """Discover competitor listings via search APIs. Returns dict with results + queries_executed."""
     provider = settings.active_search_provider
-    if provider == "serper":
-        listings = await _serper_name_search(query)
-    elif provider == "serpapi":
-        listings = await _name_search(query)
-    else:
-        listings = []
+    queries = _build_queries(query, brand, model_number)
+    logger.info("multi-query discovery (%d): %s", len(queries), queries)
+
+    all_listings: list[dict] = []
+    for q in queries:
+        if provider == "serper":
+            listings = await _serper_name_search(q)
+        elif provider == "serpapi":
+            listings = await _name_search(q)
+        else:
+            listings = []
+        all_listings.extend(listings)
 
     if image_url:
         if settings.serpapi_key:
-            listings += await _image_search(image_url)
+            all_listings += await _image_search(image_url)
         else:
             logger.info("image_url supplied but SERPAPI_KEY absent — skipping lens search")
 
-    # De-duplicate: shopping rows key on product_id (their URLs share a base);
-    # image rows key on canonical URL. Preserve order, drop title-less rows.
+    # De-duplicate across all queries: shopping rows key on product_id (URLs share a base);
+    # image rows key on canonical URL. Preserve order (earlier queries = more relevant).
     seen: set[str] = set()
     deduped: list[dict] = []
-    for item in listings:
+    for item in all_listings:
         if not item.get("title"):
             continue
         key = item.get("_id") or item["url"].split("?")[0].split("#")[0].lower()
@@ -205,5 +259,5 @@ async def discover(query: str, image_url: Optional[str] = None, limit: int = 24)
             }
         )
 
-    logger.info("Discovery for %r -> %d listings", query, len(deduped))
-    return deduped[:limit]
+    logger.info("discovery total %r -> %d unique listings from %d queries", query, len(deduped), len(queries))
+    return {"results": deduped[:limit], "queries_executed": queries}

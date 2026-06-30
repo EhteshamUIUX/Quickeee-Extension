@@ -170,6 +170,7 @@ export default function App() {
         imageUrl: p.imageUrl,
         brand: norm.brand,
         model: norm.model,
+        model_number: norm.model_number, // FIX 1: enables multi-query search on backend
       },
       (resp: DiscoverCompetitorsResponse | undefined) => {
         if (runIdRef.current !== myRun) return; // superseded — ignore

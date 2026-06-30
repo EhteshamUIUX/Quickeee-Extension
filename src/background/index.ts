@@ -409,6 +409,7 @@ interface DiscoverArgs {
   imageUrl: string | null;
   brand: string | null;
   model: string;
+  model_number?: string | null; // FIX 1: extracted pure model number for multi-query search
 }
 
 async function discoverCompetitors(args: DiscoverArgs): Promise<DiscoverResult> {
@@ -424,6 +425,7 @@ async function discoverCompetitors(args: DiscoverArgs): Promise<DiscoverResult> 
           image_url: args.imageUrl,
           brand: args.brand,
           model: args.model,
+          model_number: args.model_number ?? null, // FIX 1: enables multi-query on backend
         }),
       },
       90_000, // backend may make up to two SerpApi calls
@@ -446,15 +448,18 @@ async function discoverCompetitors(args: DiscoverArgs): Promise<DiscoverResult> 
   } catch {
     throw new Error("Discovery backend returned an invalid response.");
   }
-  // ===== STEP 1 - SEARCH (logging only) =====
+  // ===== STEP 1 - SEARCH (FIX 6 logging) =====
+  const queriesRun = data.queries_executed?.length ? data.queries_executed : [args.query];
   console.log(
     `\n==================================================\n` +
       `STEP 1 - SEARCH\n` +
       `==================================================\n` +
-      `Search query sent to Google: ${args.query}\n` +
-      `Search URL (backend proxy): ${BACKEND_BASE}/api/v1/discover\n` +
+      `Primary query: ${args.query}\n` +
+      `Model number: ${args.model_number || "—"}\n` +
+      `Backend URL: ${BACKEND_BASE}/api/v1/discover\n` +
       `Provider: ${data.provider}\n` +
-      `Number of products returned: ${data.count}` +
+      `Queries executed (${queriesRun.length}): ${queriesRun.join(" | ")}\n` +
+      `Total unique results: ${data.count}` +
       (data.error ? `\nBackend error: ${data.error}` : ""),
   );
   return data;
@@ -566,17 +571,24 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
 
       reports[i] =
         `\nCandidate #${i + 1} — ${c.platform}\n` +
+        `URL: ${c.url || "—"}\n` +
+        `Title: ${c.title}\n` +
+        `Expected model (tokens): ${diag.expectedSku}\n` +
+        `Candidate model (tokens): ${diag.candidateSku}\n` +
+        `Source model (normalized): ${diag.sourceModelNorm}\n` +
+        `SKU status: ${diag.skuStatus}\n` +
         `Brand Score: ${scores.brand}\n` +
         `Model Score: ${scores.model}\n` +
         `Title Similarity: ${scores.title}\n` +
         `Visual Similarity: ${scores.image ?? "n/a"}\n` +
+        `Model Bonus: ${diag.modelBonus > 0 ? `+${diag.modelBonus}` : "0"}\n` +
         `Final Score: ${scores.overall}\n` +
         (accepted
-          ? `\nAccepted candidate:\n` +
+          ? `\nACCEPTED\n` +
             `Store: ${c.platform}\n` +
             `Price: ${c.price ?? "—"}\n` +
             `Final Score: ${scores.overall}`
-          : `\nRejected\nReason:\n${reason}`) +
+          : `\nREJECTED\nReason: ${reason}`) +
         `\n--------------------------------------------------`;
       return { ...c, scores: scores as MatchScores, accepted };
     },

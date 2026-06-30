@@ -53,6 +53,9 @@ const norm = (s: string | null | undefined): string =>
 const tokenize = (s: string | null | undefined): string[] => norm(s).split(" ").filter(Boolean);
 const isNum = (t: string): boolean => /^\d{1,4}$/.test(t); // pure model number (e.g. shoe "14")
 const isSku = (t: string): boolean => t.length >= 5 && /[A-Z]/.test(t) && /\d/.test(t);
+// FIX 2: normalize model numbers before comparison — strip all non-alphanumeric, lowercase.
+// "MTP-1302PD-3AVEF" → "mtp1302pd3avef", makes hyphened and compact forms compare equal.
+const normModel = (s: string): string => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /** Title tokens minus brand, generic stop-words, len<=1 (raw content). */
 function contentTokens(title: string | null | undefined, brand: string | null | undefined): string[] {
@@ -60,9 +63,9 @@ function contentTokens(title: string | null | undefined, brand: string | null | 
   return tokenize(title).filter((t) => t.length > 1 && !GENERIC.has(t) && !b.has(t));
 }
 
-/** Keywords used for fuzzy title comparison: also drops SKUs + marketing words. */
+/** Keywords used for fuzzy title comparison: drops marketing words; keeps SKU/model tokens (FIX 5). */
 function titleKeywords(title: string | null | undefined, brand: string | null | undefined): Set<string> {
-  return new Set(contentTokens(title, brand).filter((t) => !isSku(t) && !MARKETING.has(t)));
+  return new Set(contentTokens(title, brand).filter((t) => !MARKETING.has(t)));
 }
 
 interface Parts {
@@ -90,6 +93,8 @@ export interface CompetitorScore extends MatchScores {
     expectedSku: string; // SKU/model tokens parsed from the Quickeee title
     candidateSku: string; // SKU/model tokens parsed from the candidate title
     skuStatus: string; // match / mismatch / n-a
+    sourceModelNorm: string; // FIX 4: normalized source model string (e.g. "mtp1302pd3avef"), "—" if n/a
+    modelBonus: number; // FIX 4: +30 if exact normalized model match, else 0
   };
 }
 
@@ -169,6 +174,22 @@ export function scoreCompetitor(
     const withImg = ((coreNum + WEIGHTS.image * (image / 100)) / (coreDen + WEIGHTS.image)) * 100;
     confidence = Math.max(coreConf, withImg);
   }
+
+  // ---- MODEL NUMBER BONUS (FIX 4): +30 when candidate title contains the exact normalized model ----
+  // Only applies when the Quickeee title is "BRAND MODEL_NUMBER" (no description words, no spaces in model).
+  // Uses normModel (FIX 2) for comparison so "MTP-1302PD-3AVEF" matches "MTP1302PD3AVEF".
+  let sourceModelNorm: string | null = null;
+  if (brand) {
+    const safeBrand = brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const afterBrand = quickeee.title.replace(new RegExp(`^${safeBrand}\\s*`, "i"), "").trim();
+    if (/^[A-Z0-9][A-Z0-9\-]{3,}$/i.test(afterBrand) && afterBrand.length >= 5) {
+      sourceModelNorm = normModel(afterBrand);
+    }
+  }
+  const candidateFullNorm = normModel(competitorTitle);
+  const modelBonus = sourceModelNorm && candidateFullNorm.includes(sourceModelNorm) ? 30 : 0;
+  confidence = Math.min(100, confidence + modelBonus);
+
   const overall = Math.round(confidence);
 
   const accepted = overall >= ACCEPT_THRESHOLD;
@@ -212,6 +233,13 @@ export function scoreCompetitor(
     accepted,
     identityConfirmed,
     rejectionReason,
-    diag: { candidateBrand, expectedSku, candidateSku, skuStatus },
+    diag: {
+      candidateBrand,
+      expectedSku,
+      candidateSku,
+      skuStatus,
+      sourceModelNorm: sourceModelNorm ?? "—",
+      modelBonus,
+    },
   };
 }

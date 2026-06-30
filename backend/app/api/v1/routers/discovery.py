@@ -21,6 +21,7 @@ class DiscoverRequest(BaseModel):
     image_url: Optional[str] = None
     brand: Optional[str] = None
     model: Optional[str] = None
+    model_number: Optional[str] = None  # FIX 1: pure model number for multi-query search
 
 
 class CompetitorListing(BaseModel):
@@ -38,6 +39,7 @@ class DiscoverResponse(BaseModel):
     provider: str  # "serpapi" | "none"
     error: Optional[str] = None
     results: list[CompetitorListing] = []
+    queries_executed: list[str] = []  # FIX 6: all queries that were run
 
 
 @router.post("", response_model=DiscoverResponse)
@@ -50,12 +52,19 @@ async def discover(payload: DiscoverRequest) -> DiscoverResponse:
             provider="none",
             error="No search provider key configured. Set SERPER_KEY or SERPAPI_KEY.",
             results=[],
+            queries_executed=[],
         )
-    results = await discover_competitors(payload.query, payload.image_url)
+    data = await discover_competitors(
+        payload.query,
+        payload.image_url,
+        payload.brand,
+        payload.model_number,
+    )
     return DiscoverResponse(
         query=payload.query,
-        count=len(results),
+        count=len(data["results"]),
         provider=active,
         error=None,
-        results=[CompetitorListing(**r) for r in results],
+        results=[CompetitorListing(**r) for r in data["results"]],
+        queries_executed=data["queries_executed"],
     )
