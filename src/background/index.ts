@@ -501,28 +501,58 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
   // Hash the Quickeee image once (image is only 10% — failure is non-fatal).
   const sourceHash: Hash | null = quickeee.imageUrl ? await hashImageUrl(quickeee.imageUrl) : null;
 
-  const verified: VerifiedListing[] = await mapLimit(competitors, 4, async (c) => {
-    const image = await imageScore(sourceHash, c.image); // number | null
-    const { accepted, identityConfirmed, rejectionReason, ...scores } = scoreCompetitor(
-      { title: quickeee.title, brand: quickeee.brand },
-      c.title,
-      image,
-    );
-    void identityConfirmed;
-    // Weighted-confidence log: search basis, brand/title/sku/image sub-scores,
-    // final confidence (overall), decision and the exact rejection reason.
-    const q = `${quickeee.brand ?? ""} ${quickeee.title}`.trim();
-    const line =
-      `${c.platform} | "${c.title}" | query="${q}" | ` +
-      `brand=${scores.brand} title=${scores.title} model/sku=${scores.model} ` +
-      `image=${scores.image ?? "n/a"} | confidence=${scores.overall}`;
-    if (accepted) {
-      console.log(`[verify] VERIFIED — ${line} | decision=VERIFIED`);
-    } else {
-      console.log(`[verify] REJECTED — ${line} | decision=REJECTED | reason: ${rejectionReason}`);
-    }
-    return { ...c, scores: scores as MatchScores, accepted };
-  });
+  // Detailed verification report (service-worker console). Logging only — the
+  // scoring is unchanged. The search query basis is the brand + Quickeee title.
+  const searchQuery = `${quickeee.brand ?? ""} ${quickeee.title}`.trim();
+  console.log(`\n[verify] Google returned ${competitors.length} candidates.`);
+  console.log(`[verify] Expected brand: ${quickeee.brand ?? "—"} | Expected title: ${quickeee.title}`);
+  console.log(`[verify] Search query: "${searchQuery}"\n`);
+
+  // Build each candidate's report into a slot so the final dump is in order
+  // even though hashing/scoring runs 4-at-a-time.
+  const reports = new Array<string>(competitors.length);
+
+  const verified: VerifiedListing[] = await mapLimit(
+    competitors.map((c, i) => ({ c, i })),
+    4,
+    async ({ c, i }) => {
+      const image = await imageScore(sourceHash, c.image); // number | null
+      const { accepted, identityConfirmed, rejectionReason, diag, ...scores } = scoreCompetitor(
+        { title: quickeee.title, brand: quickeee.brand },
+        c.title,
+        image,
+      );
+      void identityConfirmed;
+      reports[i] =
+        `------------------------------------------------\n` +
+        `Candidate #${i + 1}\n` +
+        `Source: ${c.platform}\n` +
+        `URL: ${c.url || "—"}\n\n` +
+        `Brand extracted: ${diag.candidateBrand}\n` +
+        `Expected brand: ${quickeee.brand ?? "—"}\n` +
+        `Brand similarity: ${scores.brand}\n\n` +
+        `Expected title: ${quickeee.title}\n` +
+        `Candidate title: ${c.title}\n` +
+        `Title similarity: ${scores.title}\n\n` +
+        `Expected SKU: ${diag.expectedSku}\n` +
+        `Candidate SKU: ${diag.candidateSku}\n` +
+        `SKU similarity: ${diag.skuStatus}\n\n` +
+        `Image similarity: ${scores.image ?? "n/a"}\n\n` +
+        `Confidence score: ${scores.overall}\n\n` +
+        `Accepted: ${accepted}\n\n` +
+        `Exact rejection reason: ${rejectionReason ?? "—"}\n` +
+        `------------------------------------------------`;
+      return { ...c, scores: scores as MatchScores, accepted };
+    },
+  );
+
+  // Dump the per-candidate reports in candidate order, then a summary.
+  for (const r of reports) console.log(r);
+  const acceptedCount = verified.filter((v) => v.accepted).length;
+  console.log(
+    `\n[verify] Summary: ${competitors.length} candidates -> ` +
+      `${acceptedCount} accepted, ${competitors.length - acceptedCount} rejected.\n`,
+  );
 
   // Highest confidence first.
   const byScore = (a: VerifiedListing, b: VerifiedListing) => b.scores.overall - a.scores.overall;

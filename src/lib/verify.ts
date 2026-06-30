@@ -99,6 +99,13 @@ export interface CompetitorScore extends MatchScores {
   accepted: boolean;
   identityConfirmed: boolean;
   rejectionReason: string | null;
+  /** Diagnostics for the verification report (does not affect scoring). */
+  diag: {
+    candidateBrand: string; // expected-brand tokens detected in the candidate title
+    expectedSku: string; // SKU/model tokens parsed from the Quickeee title
+    candidateSku: string; // SKU/model tokens parsed from the candidate title
+    skuStatus: string; // match / mismatch / n-a
+  };
 }
 
 /**
@@ -188,6 +195,22 @@ export function scoreCompetitor(
     rejectionReason = `confidence ${overall} < ${ACCEPT_THRESHOLD} (${bits.join(", ")})`;
   }
 
+  // ---- diagnostics (report only; not used in scoring) ----
+  const matchedBrand = chkToks.filter((t) => cToks.has(t));
+  const missingBrand = chkToks.filter((t) => !cToks.has(t));
+  const candidateBrand = !hasBrand
+    ? "— (no source brand)"
+    : matchedBrand.length === 0
+      ? "(expected brand not found in candidate)"
+      : matchedBrand.join(" ") + (missingBrand.length ? ` (missing: ${missingBrand.join(" ")})` : "");
+  const expectedSku = a.skus.size ? [...a.skus].join(", ") : "—";
+  const candidateSku = b.skus.size ? [...b.skus].join(", ") : "—";
+  const skuStatus = skuApplicable
+    ? skuMatch
+      ? `match (${modelScore})`
+      : "mismatch (0)"
+    : "n/a (no SKU/model on candidate)";
+
   return {
     model: modelScore,
     title: titleScore,
@@ -197,5 +220,6 @@ export function scoreCompetitor(
     accepted,
     identityConfirmed,
     rejectionReason,
+    diag: { candidateBrand, expectedSku, candidateSku, skuStatus },
   };
 }
