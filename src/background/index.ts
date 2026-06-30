@@ -440,11 +440,24 @@ async function discoverCompetitors(args: DiscoverArgs): Promise<DiscoverResult> 
   if (!res.ok) {
     throw new Error(`Discovery backend error ${res.status} ${res.statusText}`);
   }
+  let data: DiscoverResult;
   try {
-    return (await res.json()) as DiscoverResult;
+    data = (await res.json()) as DiscoverResult;
   } catch {
     throw new Error("Discovery backend returned an invalid response.");
   }
+  // ===== STEP 1 - SEARCH (logging only) =====
+  console.log(
+    `\n==================================================\n` +
+      `STEP 1 - SEARCH\n` +
+      `==================================================\n` +
+      `Search query sent to Google: ${args.query}\n` +
+      `Search URL (backend proxy): ${BACKEND_BASE}/api/v1/discover\n` +
+      `Provider: ${data.provider}\n` +
+      `Number of products returned: ${data.count}` +
+      (data.error ? `\nBackend error: ${data.error}` : ""),
+  );
+  return data;
 }
 
 chrome.runtime.onMessage.addListener(
@@ -501,16 +514,34 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
   // Hash the Quickeee image once (image is only 10% — failure is non-fatal).
   const sourceHash: Hash | null = quickeee.imageUrl ? await hashImageUrl(quickeee.imageUrl) : null;
 
-  // Detailed verification report (service-worker console). Logging only — the
-  // scoring is unchanged. The search query basis is the brand + Quickeee title.
-  const searchQuery = `${quickeee.brand ?? ""} ${quickeee.title}`.trim();
-  console.log(`\n[verify] Google returned ${competitors.length} candidates.`);
-  console.log(`[verify] Expected brand: ${quickeee.brand ?? "—"} | Expected title: ${quickeee.title}`);
-  console.log(`[verify] Search query: "${searchQuery}"\n`);
+  // ===== STEP 2 - EVERY CANDIDATE (logging only) =====
+  console.log(
+    `\n==================================================\n` +
+      `STEP 2 - EVERY CANDIDATE\n` +
+      `==================================================`,
+  );
+  competitors.forEach((c, i) => {
+    const img = c.image ? (c.image.startsWith("data:") ? "[inline base64 image]" : c.image) : "—";
+    console.log(
+      `\nCandidate #${i + 1}\n` +
+        `Store: ${c.platform}\n` +
+        `Title: ${c.title}\n` +
+        `Price: ${c.price ?? "—"}\n` +
+        `Image URL: ${img}\n` +
+        `Product URL: ${c.url || "—"}\n` +
+        `--------------------------------------------------`,
+    );
+  });
 
-  // Build each candidate's report into a slot so the final dump is in order
-  // even though hashing/scoring runs 4-at-a-time.
+  // ===== STEP 3/4/5 - MATCHING, REJECTION REASON, ACCEPTED (logging only) =====
+  console.log(
+    `\n==================================================\n` +
+      `STEP 3 - MATCHING  (STEP 4 reason / STEP 5 accepted per candidate)\n` +
+      `==================================================`,
+  );
+  // Buffer per candidate so the dump stays in order despite concurrent hashing.
   const reports = new Array<string>(competitors.length);
+  const hasBrand = !!(quickeee.brand && quickeee.brand.trim());
 
   const verified: VerifiedListing[] = await mapLimit(
     competitors.map((c, i) => ({ c, i })),
@@ -523,30 +554,33 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
         image,
       );
       void identityConfirmed;
+      void rejectionReason; // STEP 4 uses a single derived reason below
+
+      // ONE rejection reason per candidate, derived from the existing scores
+      // (no algorithm/threshold change — this only picks the dominant cause).
+      let reason: string;
+      if (hasBrand && scores.brand < 100) reason = `Brand mismatch (brand score ${scores.brand})`;
+      else if (diag.skuStatus.startsWith("mismatch")) reason = "Model number mismatch";
+      else reason = `Title similarity too low (${scores.title})`;
+
       reports[i] =
-        `------------------------------------------------\n` +
-        `Candidate #${i + 1}\n` +
-        `Source: ${c.platform}\n` +
-        `URL: ${c.url || "—"}\n\n` +
-        `Brand extracted: ${diag.candidateBrand}\n` +
-        `Expected brand: ${quickeee.brand ?? "—"}\n` +
-        `Brand similarity: ${scores.brand}\n\n` +
-        `Expected title: ${quickeee.title}\n` +
-        `Candidate title: ${c.title}\n` +
-        `Title similarity: ${scores.title}\n\n` +
-        `Expected SKU: ${diag.expectedSku}\n` +
-        `Candidate SKU: ${diag.candidateSku}\n` +
-        `SKU similarity: ${diag.skuStatus}\n\n` +
-        `Image similarity: ${scores.image ?? "n/a"}\n\n` +
-        `Confidence score: ${scores.overall}\n\n` +
-        `Accepted: ${accepted}\n\n` +
-        `Exact rejection reason: ${rejectionReason ?? "—"}\n` +
-        `------------------------------------------------`;
+        `\nCandidate #${i + 1} — ${c.platform}\n` +
+        `Brand Score: ${scores.brand}\n` +
+        `Model Score: ${scores.model}\n` +
+        `Title Similarity: ${scores.title}\n` +
+        `Visual Similarity: ${scores.image ?? "n/a"}\n` +
+        `Final Score: ${scores.overall}\n` +
+        (accepted
+          ? `\nAccepted candidate:\n` +
+            `Store: ${c.platform}\n` +
+            `Price: ${c.price ?? "—"}\n` +
+            `Final Score: ${scores.overall}`
+          : `\nRejected\nReason:\n${reason}`) +
+        `\n--------------------------------------------------`;
       return { ...c, scores: scores as MatchScores, accepted };
     },
   );
 
-  // Dump the per-candidate reports in candidate order, then a summary.
   for (const r of reports) console.log(r);
   const acceptedCount = verified.filter((v) => v.accepted).length;
   console.log(
