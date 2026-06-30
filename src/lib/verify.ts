@@ -79,21 +79,6 @@ function partsOf(title: string, brand: string | null): Parts {
   };
 }
 
-/** Full SKU + its numeric prefix (#1234) as family keys. */
-function skuFamilies(skus: Set<string>): Set<string> {
-  const f = new Set<string>();
-  for (const s of skus) {
-    f.add(s);
-    const m = s.match(/^\d{3,}/);
-    if (m) f.add("#" + m[0]);
-  }
-  return f;
-}
-
-function intersects(a: Set<string>, b: Set<string>): boolean {
-  for (const x of a) if (b.has(x)) return true;
-  return false;
-}
 
 export interface CompetitorScore extends MatchScores {
   accepted: boolean;
@@ -133,7 +118,11 @@ export function scoreCompetitor(
   const brandScore = Math.round(brand01 * 100);
 
   // ---- SKU / MODEL (applicable only when both sides carry an identifier) ----
-  const skuFamilyMatch = intersects(skuFamilies(a.skus), skuFamilies(b.skus));
+  // Score = fraction of the source's SKU tokens that appear verbatim in the candidate's
+  // SKU tokens. This correctly handles partial variant matches:
+  //   "1302PD" + "3AVEF" vs "1302PD" + "1A1VEF" → 1/2 = 0.5 (different colour variant)
+  //   "1302PD" + "3AVEF" vs "1302PD" + "3AVEF"  → 2/2 = 1.0 (exact match)
+  //   "1302PD" + "3AVEF" vs "1302PEC"            → 0/2 = 0   (different series)
   let numMatch = false;
   for (const n of a.nums) if (b.nums.has(n)) numMatch = true;
   const skuComparable = a.skus.size > 0 && b.skus.size > 0;
@@ -142,7 +131,8 @@ export function scoreCompetitor(
   let sku01: number;
   if (skuComparable) {
     skuApplicable = true;
-    sku01 = skuFamilyMatch ? 1 : 0;
+    const overlap = [...a.skus].filter((t) => b.skus.has(t)).length;
+    sku01 = overlap / a.skus.size; // 0..1
   } else if (numComparable) {
     skuApplicable = true;
     sku01 = numMatch ? 1 : 0;
@@ -150,7 +140,7 @@ export function scoreCompetitor(
     skuApplicable = false; // competitor lists no SKU/model -> neutral, don't penalize
     sku01 = 0;
   }
-  const skuMatch = (skuComparable && skuFamilyMatch) || (numComparable && numMatch);
+  const skuMatch = (skuComparable && sku01 >= 1) || (numComparable && numMatch);
   const modelScore = skuApplicable ? Math.round(sku01 * 100) : 50; // 50 = neutral (display)
 
   // ---- TITLE similarity (marketing words + SKUs stripped) ----
@@ -205,11 +195,13 @@ export function scoreCompetitor(
       : matchedBrand.join(" ") + (missingBrand.length ? ` (missing: ${missingBrand.join(" ")})` : "");
   const expectedSku = a.skus.size ? [...a.skus].join(", ") : "—";
   const candidateSku = b.skus.size ? [...b.skus].join(", ") : "—";
-  const skuStatus = skuApplicable
-    ? skuMatch
+  const skuStatus = !skuApplicable
+    ? "n/a (no SKU/model on candidate)"
+    : sku01 >= 1
       ? `match (${modelScore})`
-      : "mismatch (0)"
-    : "n/a (no SKU/model on candidate)";
+      : sku01 > 0
+        ? `partial (${modelScore} — different variant)`
+        : "mismatch (0)";
 
   return {
     model: modelScore,

@@ -561,6 +561,7 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
       let reason: string;
       if (hasBrand && scores.brand < 100) reason = `Brand mismatch (brand score ${scores.brand})`;
       else if (diag.skuStatus.startsWith("mismatch")) reason = "Model number mismatch";
+      else if (diag.skuStatus.startsWith("partial")) reason = `Different model variant (${diag.skuStatus})`;
       else reason = `Title similarity too low (${scores.title})`;
 
       reports[i] =

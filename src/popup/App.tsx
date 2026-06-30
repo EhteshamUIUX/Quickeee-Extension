@@ -491,7 +491,7 @@ function ErrorView({ message, onRetry }: { message: string | null; onRetry?: () 
 function Footer() {
   return (
     <div className="mt-auto pt-1 text-center text-[10px] text-slate-300">
-      Verified price intelligence · only matches ≥90% enter the comparison.
+      Verified price intelligence · only matches ≥85% enter the comparison.
     </div>
   );
 }
