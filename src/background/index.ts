@@ -509,19 +509,17 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
       image,
     );
     void identityConfirmed;
-    // Strict-pipeline log: competitor, visual(image) similarity, brand score,
-    // title score, final decision, and the exact rejection reason.
+    // Weighted-confidence log: search basis, brand/title/sku/image sub-scores,
+    // final confidence (overall), decision and the exact rejection reason.
+    const q = `${quickeee.brand ?? ""} ${quickeee.title}`.trim();
+    const line =
+      `${c.platform} | "${c.title}" | query="${q}" | ` +
+      `brand=${scores.brand} title=${scores.title} model/sku=${scores.model} ` +
+      `image=${scores.image ?? "n/a"} | confidence=${scores.overall}`;
     if (accepted) {
-      console.log(
-        `[verify] VERIFIED — ${c.platform} | "${c.title}" | ` +
-        `visual=${scores.image ?? "n/a"} brand=${scores.brand} title=${scores.title} | decision=VERIFIED`,
-      );
+      console.log(`[verify] VERIFIED — ${line} | decision=VERIFIED`);
     } else {
-      console.log(
-        `[verify] REJECTED — ${c.platform} | "${c.title}" | ` +
-        `visual=${scores.image ?? "n/a"} brand=${scores.brand} title=${scores.title} | ` +
-        `decision=REJECTED | reason: ${rejectionReason}`,
-      );
+      console.log(`[verify] REJECTED — ${line} | decision=REJECTED | reason: ${rejectionReason}`);
     }
     return { ...c, scores: scores as MatchScores, accepted };
   });

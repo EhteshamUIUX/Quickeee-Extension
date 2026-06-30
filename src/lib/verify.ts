@@ -1,42 +1,51 @@
 /**
- * Phase 3 — Product Verification Engine (STRICT ORDERED PIPELINE).
+ * Phase 3 — Product Verification Engine (WEIGHTED CONFIDENCE MODEL).
  *
- * Pure & deterministic. Produces title/brand/model/image sub-scores + a weighted
- * `overall` (kept for DISPLAY/RANKING only) and an accept decision made by a
- * strict, short-circuiting pipeline in this EXACT order:
+ * Pure & deterministic. No hard single-signal gate. A competitor earns a
+ * confidence score (0..100) from four weighted signals and is ACCEPTED at
+ * >= ACCEPT_THRESHOLD:
  *
- *   STEP 1  VISUAL : perceptual-image (dHash) similarity must be >= VISUAL_GATE.
- *                    image === null (uncomputable) cannot prove >= 90% -> reject.
- *   STEP 2  BRAND  : the normalized Quickeee brand must appear in the competitor
- *                    title (case-insensitive, punctuation ignored). No skip.
- *   STEP 3  TITLE  : keyword-overlap title score must be >= TITLE_GATE. Title
- *                    normalization already ignores Men's/Men, colour spelling,
- *                    hyphens, marketing words and minor punctuation.
+ *   Brand            35   normalized brand present in the competitor title
+ *   Title similarity 30   fuzzy keyword overlap (marketing words stripped)
+ *   SKU / model      20   shared SKU family or model number
+ *   Image            15   perceptual-image similarity — BOOST ONLY
  *
- * A competitor is VERIFIED only when all three pass. The first failing gate
- * short-circuits and is recorded as the exact rejectionReason. Visual-only,
- * brand-only or title-only matches are never approved.
+ * Design rules (per product spec):
+ *  - Image is never the first or a mandatory filter, and can only RAISE
+ *    confidence, never reject. A differing catalogue image cannot sink a
+ *    SKU/brand/title match (marketplace photos differ for the same SKU).
+ *  - Signals that can't be evaluated (no competitor SKU, unfetchable image)
+ *    are treated as NEUTRAL and dropped from the weighting, then the remaining
+ *    weights are renormalized to 100 — missing data never penalizes.
+ *  - A matching SKU/model number is a strong positive that, combined with the
+ *    brand, outweighs catalogue-image differences.
  */
 import type { MatchScores } from "./types";
 
-// The weighted `overall` is retained for the comparison table / ranking only —
-// it no longer decides acceptance. ACCEPT_THRESHOLD doubles as the "≥ N%" label
-// shown in the UI; keep it equal to VISUAL_GATE so that label stays coherent.
-export const ACCEPT_THRESHOLD = 90;
-export const MODEL_GATE = 60; // retained for the model sub-score (display only)
+// Accept competitors at or above this weighted confidence (0..100). Also the
+// "≥ N%" figure surfaced in the UI's empty-state label.
+export const ACCEPT_THRESHOLD = 85;
 
-// ---- Strict verification gates (evaluated in this exact order) ----
-export const VISUAL_GATE = 90; // STEP 1 — min image (perceptual dHash) similarity
-export const TITLE_GATE = 50;  // STEP 3 — min title keyword-overlap score
+// Signal weights (sum to 100 when all four are applicable).
+export const WEIGHTS = { brand: 35, title: 30, sku: 20, image: 15 };
 
-const W = { model: 0.4, title: 0.3, brand: 0.2, image: 0.1 };
-
+// Generic stop-words removed from titles/brands before comparison.
 const GENERIC = new Set([
   "BUY", "ONLINE", "SHOP", "SHOES", "SHOE", "SNEAKERS", "SNEAKER", "RUNNING", "TRAINING",
   "MEN", "MENS", "WOMEN", "WOMENS", "UNISEX", "KIDS", "BOYS", "GIRLS", "SPORTSTYLE", "SPORTS",
-  "CASUAL", "FOR", "THE", "PRICE", "BEST", "OFFICIAL", "STORE", "INDIA", "COLLECTION", "LATEST",
-  "NEW", "SIZE", "COLOR", "COLOUR", "WITH", "AND", "BY", "OF", "IN", "WATCH", "WATCHES",
+  "CASUAL", "FOR", "THE", "PRICE", "BEST", "OFFICIAL", "STORE", "INDIA", "COLLECTION",
+  "SIZE", "WITH", "AND", "BY", "OF", "IN", "WATCH", "WATCHES",
   "ANALOG", "ANALOGUE", "DIGITAL", "STAINLESS", "STEEL", "LEATHER", "DIAL", "EDITION", "SERIES",
+]);
+
+// Marketing / filler words stripped before TITLE comparison only (symmetric on
+// both sides, so it can only reduce noise, never invent a match). Keep real
+// product-type words (NECKLACE, SHELL, PEARL, SHIRT, TROUSERS, …) out of here.
+const MARKETING = new Set([
+  "PREMIUM", "ORIGINAL", "NEW", "LATEST", "CONTEMPORARY", "CLASSY", "CLASSIC", "STYLISH",
+  "FANCY", "DESIGNER", "ELEGANT", "TRENDY", "EXCLUSIVE", "HANDCRAFTED", "TRADITIONAL",
+  "MODERN", "LUXURY", "LUXE", "BEAUTIFUL", "GORGEOUS", "STUNNING", "TRENDING",
+  "GOLD", "TONE", "SILVER", "ROSE", "PLATED", "TONED",
 ]);
 
 const norm = (s: string | null | undefined): string =>
@@ -45,9 +54,15 @@ const tokenize = (s: string | null | undefined): string[] => norm(s).split(" ").
 const isNum = (t: string): boolean => /^\d{1,4}$/.test(t); // pure model number (e.g. shoe "14")
 const isSku = (t: string): boolean => t.length >= 5 && /[A-Z]/.test(t) && /\d/.test(t);
 
+/** Title tokens minus brand, generic stop-words, len<=1 (raw content). */
 function contentTokens(title: string | null | undefined, brand: string | null | undefined): string[] {
   const b = new Set(tokenize(brand));
   return tokenize(title).filter((t) => t.length > 1 && !GENERIC.has(t) && !b.has(t));
+}
+
+/** Keywords used for fuzzy title comparison: also drops SKUs + marketing words. */
+function titleKeywords(title: string | null | undefined, brand: string | null | undefined): Set<string> {
+  return new Set(contentTokens(title, brand).filter((t) => !isSku(t) && !MARKETING.has(t)));
 }
 
 interface Parts {
@@ -87,8 +102,8 @@ export interface CompetitorScore extends MatchScores {
 }
 
 /**
- * Score one competitor against the Quickeee product.
- * @param image 0..100 similarity, or null when the image couldn't be fetched.
+ * Score one competitor against the Quickeee product (weighted confidence).
+ * @param image 0..100 visual similarity, or null when it couldn't be computed.
  */
 export function scoreCompetitor(
   quickeee: { title: string; brand: string | null },
@@ -98,81 +113,89 @@ export function scoreCompetitor(
   const brand = quickeee.brand;
   const a = partsOf(quickeee.title, brand);
   const b = partsOf(competitorTitle, brand);
-
-  const skuFamilyMatch = intersects(skuFamilies(a.skus), skuFamilies(b.skus));
-  const brandToks = tokenize(brand);
   const cToks = new Set(tokenize(competitorTitle));
-  // Ignore generic stop-words (e.g. "THE" in "The Bear House") when checking
-  // whether the brand appears in the competitor title — stop words are often
-  // omitted by platforms without changing brand identity.
+
+  // ---- BRAND (significant tokens only; "THE" etc. ignored) ----
+  const brandToks = tokenize(brand);
   const sigBrandToks = brandToks.filter((t) => !GENERIC.has(t));
   const chkToks = sigBrandToks.length > 0 ? sigBrandToks : brandToks;
-  const brandPresent = chkToks.length > 0 && chkToks.every((t) => cToks.has(t));
+  const hasBrand = chkToks.length > 0;
+  let brandHit = 0;
+  for (const t of chkToks) if (cToks.has(t)) brandHit++;
+  const brand01 = hasBrand ? brandHit / chkToks.length : 0; // 0..1
+  const brandScore = Math.round(brand01 * 100);
 
-  // ---- model ----
-  let nameHit = 0;
-  for (const t of a.names) if (b.names.has(t)) nameHit++;
-  const nameCov = a.names.size ? nameHit / a.names.size : b.names.size ? 0 : 1;
-  let sameNum = false;
-  for (const n of a.nums) if (b.nums.has(n)) sameNum = true;
-  const numScore = a.nums.size && b.nums.size ? (sameNum ? 1 : 0) : 1;
-  let model = Math.round(100 * (0.6 * nameCov + 0.4 * numScore));
-  if (a.nums.size && b.nums.size && !sameNum) model = Math.min(model, 30); // different model number
-  if (skuFamilyMatch) model = Math.max(model, 95); // shared SKU family = same product line
+  // ---- SKU / MODEL (applicable only when both sides carry an identifier) ----
+  const skuFamilyMatch = intersects(skuFamilies(a.skus), skuFamilies(b.skus));
+  let numMatch = false;
+  for (const n of a.nums) if (b.nums.has(n)) numMatch = true;
+  const skuComparable = a.skus.size > 0 && b.skus.size > 0;
+  const numComparable = a.nums.size > 0 && b.nums.size > 0;
+  let skuApplicable: boolean;
+  let sku01: number;
+  if (skuComparable) {
+    skuApplicable = true;
+    sku01 = skuFamilyMatch ? 1 : 0;
+  } else if (numComparable) {
+    skuApplicable = true;
+    sku01 = numMatch ? 1 : 0;
+  } else {
+    skuApplicable = false; // competitor lists no SKU/model -> neutral, don't penalize
+    sku01 = 0;
+  }
+  const skuMatch = (skuComparable && skuFamilyMatch) || (numComparable && numMatch);
+  const modelScore = skuApplicable ? Math.round(sku01 * 100) : 50; // 50 = neutral (display)
 
-  // ---- title (ignore SKU tokens; they vary by colour) ----
-  const at = new Set(contentTokens(quickeee.title, brand).filter((t) => !isSku(t)));
-  const bt = new Set(contentTokens(competitorTitle, brand).filter((t) => !isSku(t)));
+  // ---- TITLE similarity (marketing words + SKUs stripped) ----
+  const at = titleKeywords(quickeee.title, brand);
+  const bt = titleKeywords(competitorTitle, brand);
   let inter = 0;
   for (const t of at) if (bt.has(t)) inter++;
-  const title =
-    at.size && bt.size
-      ? Math.round(100 * (0.5 * ((2 * inter) / (at.size + bt.size)) + 0.5 * (inter / at.size)))
-      : 0;
+  const title01 =
+    at.size && bt.size ? 0.5 * ((2 * inter) / (at.size + bt.size)) + 0.5 * (inter / at.size) : 0;
+  const titleScore = Math.round(title01 * 100);
 
-  // ---- brand (SKU family implies same brand; absence = unknown, not wrong) ----
-  let brandScore: number;
-  if (skuFamilyMatch) brandScore = 100;
-  else if (!brandToks.length) brandScore = 60;
-  else if (brandPresent) brandScore = 100;
-  else brandScore = brandToks.some((t) => cToks.has(t)) ? 80 : 65;
+  // ---- WEIGHTED CONFIDENCE (renormalized over applicable signals) ----
+  // Core signals: brand (if any), title (always), sku (if comparable).
+  const core: Array<[number, number]> = [];
+  if (hasBrand) core.push([WEIGHTS.brand, brand01]);
+  core.push([WEIGHTS.title, title01]);
+  if (skuApplicable) core.push([WEIGHTS.sku, sku01]);
+  const coreNum = core.reduce((s, [w, v]) => s + w * v, 0);
+  const coreDen = core.reduce((s, [w]) => s + w, 0) || 1;
+  const coreConf = (coreNum / coreDen) * 100;
 
-  // ---- overall (redistribute image weight if it couldn't be computed) ----
-  const overall =
-    image === null
-      ? Math.round((W.model * model + W.title * title + W.brand * brandScore) / (1 - W.image))
-      : Math.round(W.model * model + W.title * title + W.brand * brandScore + W.image * image);
+  // Image is BOOST ONLY: include it only if doing so RAISES confidence, so a
+  // differing/low/absent catalogue image can never reject a match.
+  let confidence = coreConf;
+  if (image !== null) {
+    const withImg = ((coreNum + WEIGHTS.image * (image / 100)) / (coreDen + WEIGHTS.image)) * 100;
+    confidence = Math.max(coreConf, withImg);
+  }
+  const overall = Math.round(confidence);
 
-  // ---- identity (kept for the returned MatchScores shape / display) ----
-  const hasSku = a.skus.size > 0;
-  const identityConfirmed = !hasSku || skuFamilyMatch || brandPresent;
+  const accepted = overall >= ACCEPT_THRESHOLD;
+  const identityConfirmed = skuMatch || brand01 >= 1;
 
-  // ---- STRICT ORDERED VERIFICATION PIPELINE ---------------------------------
-  // STEP 1 visual -> STEP 2 brand -> STEP 3 title. All must pass; the first gate
-  // that fails short-circuits and becomes the exact rejection reason.
-  const hasBrand = chkToks.length > 0; // is there a brand to verify against?
-  const visualPass = image !== null && image >= VISUAL_GATE; // STEP 1
-  const brandPass = !hasBrand || brandPresent; // STEP 2 (can't reject on unknown brand)
-  const titlePass = title >= TITLE_GATE; // STEP 3
-
-  let accepted: boolean;
-  let rejectionReason: string | null;
-  if (!visualPass) {
-    accepted = false;
-    rejectionReason =
-      image === null
-        ? `STEP1 visual: no comparable image — similarity unverifiable (need ≥ ${VISUAL_GATE}%)`
-        : `STEP1 visual: similarity ${image}% < ${VISUAL_GATE}%`;
-  } else if (!brandPass) {
-    accepted = false;
-    rejectionReason = `STEP2 brand: competitor brand does not match "${brand}" (brand score ${brandScore})`;
-  } else if (!titlePass) {
-    accepted = false;
-    rejectionReason = `STEP3 title: keyword match ${title} < ${TITLE_GATE}`;
-  } else {
-    accepted = true;
-    rejectionReason = null;
+  // ---- detailed rejection reason ----
+  let rejectionReason: string | null = null;
+  if (!accepted) {
+    const bits: string[] = [];
+    bits.push(hasBrand ? `brand=${brandScore}` : "brand=unknown");
+    bits.push(`title=${titleScore}`);
+    bits.push(skuApplicable ? `sku=${skuMatch ? "match" : "mismatch"}` : "sku=n/a");
+    bits.push(`image=${image === null ? "n/a" : image + "%"}`);
+    rejectionReason = `confidence ${overall} < ${ACCEPT_THRESHOLD} (${bits.join(", ")})`;
   }
 
-  return { model, title, brand: brandScore, image, overall, accepted, identityConfirmed, rejectionReason };
+  return {
+    model: modelScore,
+    title: titleScore,
+    brand: brandScore,
+    image,
+    overall,
+    accepted,
+    identityConfirmed,
+    rejectionReason,
+  };
 }
