@@ -1,36 +1,34 @@
 /**
- * Phase 3 — Product Verification Engine (text + image scoring), re-calibrated.
+ * Phase 3 — Product Verification Engine (STRICT ORDERED PIPELINE).
  *
- * Pure & deterministic. Produces title/brand/model/image sub-scores + weighted
- * overall + accept decision.
+ * Pure & deterministic. Produces title/brand/model/image sub-scores + a weighted
+ * `overall` (kept for DISPLAY/RANKING only) and an accept decision made by a
+ * strict, short-circuiting pipeline in this EXACT order:
  *
- * Identity model (handles both shoes and SKU products like watches):
- *  - MODEL is the dominant signal (40%). Different pure model NUMBERS (Kayano
- *    14 vs 15) are hard-capped -> rejected. Different model NAMES (Kayano vs
- *    Nimbus / Classic vs Sapphire) score low -> rejected by the model gate.
- *  - SKU FAMILY: an alphanumeric code (e.g. 8697LDBSSYL) and its numeric prefix
- *    (#8697) identify a product line. A shared SKU family => same product
- *    (incl. colour variants) and implies the same brand.
- *  - BRAND absence is treated as UNKNOWN (neutral), not wrong — many marketplace
- *    titles lead with the SKU and omit the brand.
- *  - IMAGE is only 10% (visual similarity alone can never approve). If the image
- *    can't be fetched, its weight is redistributed instead of counting as 0.
- *  - IDENTITY GATE: for products that carry a SKU, a match must be confirmed by
- *    a shared SKU family OR the brand appearing in the competitor title. This
- *    rejects "different brand, identical generic spec" (e.g. a Fossil
- *    "Classic Quartz Watch 32mm" vs an Alexandre Christie one).
+ *   STEP 1  VISUAL : perceptual-image (dHash) similarity must be >= VISUAL_GATE.
+ *                    image === null (uncomputable) cannot prove >= 90% -> reject.
+ *   STEP 2  BRAND  : the normalized Quickeee brand must appear in the competitor
+ *                    title (case-insensitive, punctuation ignored). No skip.
+ *   STEP 3  TITLE  : keyword-overlap title score must be >= TITLE_GATE. Title
+ *                    normalization already ignores Men's/Men, colour spelling,
+ *                    hyphens, marketing words and minor punctuation.
+ *
+ * A competitor is VERIFIED only when all three pass. The first failing gate
+ * short-circuits and is recorded as the exact rejectionReason. Visual-only,
+ * brand-only or title-only matches are never approved.
  */
 import type { MatchScores } from "./types";
 
+// The weighted `overall` is retained for the comparison table / ranking only —
+// it no longer decides acceptance. ACCEPT_THRESHOLD doubles as the "≥ N%" label
+// shown in the UI; keep it equal to VISUAL_GATE so that label stays coherent.
 export const ACCEPT_THRESHOLD = 90;
-export const MODEL_GATE = 60;
-// Apparel / generic products carry no SKU and no model number. For them the
-// model signal is meaningless, so acceptance gates on brand identity + this
-// much descriptive title overlap instead of the model-dominant rule. Kept
-// moderate (not high) because source titles carry marketing/colour/fabric
-// words competitors omit (e.g. "Elevated … Olive Viscose"), which deflates
-// overlap for genuine same-line matches. Tune up if false matches appear.
-export const APPAREL_TITLE_GATE = 50;
+export const MODEL_GATE = 60; // retained for the model sub-score (display only)
+
+// ---- Strict verification gates (evaluated in this exact order) ----
+export const VISUAL_GATE = 90; // STEP 1 — min image (perceptual dHash) similarity
+export const TITLE_GATE = 50;  // STEP 3 — min title keyword-overlap score
+
 const W = { model: 0.4, title: 0.3, brand: 0.2, image: 0.1 };
 
 const GENERIC = new Set([
@@ -85,6 +83,7 @@ function intersects(a: Set<string>, b: Set<string>): boolean {
 export interface CompetitorScore extends MatchScores {
   accepted: boolean;
   identityConfirmed: boolean;
+  rejectionReason: string | null;
 }
 
 /**
@@ -103,7 +102,12 @@ export function scoreCompetitor(
   const skuFamilyMatch = intersects(skuFamilies(a.skus), skuFamilies(b.skus));
   const brandToks = tokenize(brand);
   const cToks = new Set(tokenize(competitorTitle));
-  const brandPresent = brandToks.length > 0 && brandToks.every((t) => cToks.has(t));
+  // Ignore generic stop-words (e.g. "THE" in "The Bear House") when checking
+  // whether the brand appears in the competitor title — stop words are often
+  // omitted by platforms without changing brand identity.
+  const sigBrandToks = brandToks.filter((t) => !GENERIC.has(t));
+  const chkToks = sigBrandToks.length > 0 ? sigBrandToks : brandToks;
+  const brandPresent = chkToks.length > 0 && chkToks.every((t) => cToks.has(t));
 
   // ---- model ----
   let nameHit = 0;
@@ -139,18 +143,36 @@ export function scoreCompetitor(
       ? Math.round((W.model * model + W.title * title + W.brand * brandScore) / (1 - W.image))
       : Math.round(W.model * model + W.title * title + W.brand * brandScore + W.image * image);
 
-  // ---- identity gate (only for SKU-bearing products) ----
+  // ---- identity (kept for the returned MatchScores shape / display) ----
   const hasSku = a.skus.size > 0;
   const identityConfirmed = !hasSku || skuFamilyMatch || brandPresent;
 
-  // SKU/model products (shoes, watches) use the strict model-dominant rule.
-  // Apparel/generic products (no SKU AND no model number) instead require the
-  // brand in the competitor title + enough descriptive overlap — marketplace
-  // titles word the same garment too differently for the model score to work.
-  const hasIdentifier = a.skus.size > 0 || a.nums.size > 0;
-  const accepted = hasIdentifier
-    ? overall >= ACCEPT_THRESHOLD && model >= MODEL_GATE && identityConfirmed
-    : brandPresent && title >= APPAREL_TITLE_GATE;
+  // ---- STRICT ORDERED VERIFICATION PIPELINE ---------------------------------
+  // STEP 1 visual -> STEP 2 brand -> STEP 3 title. All must pass; the first gate
+  // that fails short-circuits and becomes the exact rejection reason.
+  const hasBrand = chkToks.length > 0; // is there a brand to verify against?
+  const visualPass = image !== null && image >= VISUAL_GATE; // STEP 1
+  const brandPass = !hasBrand || brandPresent; // STEP 2 (can't reject on unknown brand)
+  const titlePass = title >= TITLE_GATE; // STEP 3
 
-  return { model, title, brand: brandScore, image, overall, accepted, identityConfirmed };
+  let accepted: boolean;
+  let rejectionReason: string | null;
+  if (!visualPass) {
+    accepted = false;
+    rejectionReason =
+      image === null
+        ? `STEP1 visual: no comparable image — similarity unverifiable (need ≥ ${VISUAL_GATE}%)`
+        : `STEP1 visual: similarity ${image}% < ${VISUAL_GATE}%`;
+  } else if (!brandPass) {
+    accepted = false;
+    rejectionReason = `STEP2 brand: competitor brand does not match "${brand}" (brand score ${brandScore})`;
+  } else if (!titlePass) {
+    accepted = false;
+    rejectionReason = `STEP3 title: keyword match ${title} < ${TITLE_GATE}`;
+  } else {
+    accepted = true;
+    rejectionReason = null;
+  }
+
+  return { model, title, brand: brandScore, image, overall, accepted, identityConfirmed, rejectionReason };
 }

@@ -503,12 +503,26 @@ async function verifyCompetitors(args: VerifyArgs): Promise<VerifyResult> {
 
   const verified: VerifiedListing[] = await mapLimit(competitors, 4, async (c) => {
     const image = await imageScore(sourceHash, c.image); // number | null
-    const { accepted, identityConfirmed, ...scores } = scoreCompetitor(
+    const { accepted, identityConfirmed, rejectionReason, ...scores } = scoreCompetitor(
       { title: quickeee.title, brand: quickeee.brand },
       c.title,
       image,
     );
     void identityConfirmed;
+    // Strict-pipeline log: competitor, visual(image) similarity, brand score,
+    // title score, final decision, and the exact rejection reason.
+    if (accepted) {
+      console.log(
+        `[verify] VERIFIED — ${c.platform} | "${c.title}" | ` +
+        `visual=${scores.image ?? "n/a"} brand=${scores.brand} title=${scores.title} | decision=VERIFIED`,
+      );
+    } else {
+      console.log(
+        `[verify] REJECTED — ${c.platform} | "${c.title}" | ` +
+        `visual=${scores.image ?? "n/a"} brand=${scores.brand} title=${scores.title} | ` +
+        `decision=REJECTED | reason: ${rejectionReason}`,
+      );
+    }
     return { ...c, scores: scores as MatchScores, accepted };
   });
 
