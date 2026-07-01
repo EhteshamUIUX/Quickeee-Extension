@@ -10,7 +10,7 @@ fallback: if SerpApi has no key or errors, callers get an empty list / error.
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, parse_qs
 
 import httpx
 
@@ -236,6 +236,26 @@ async def discover(
             all_listings += await _image_search(image_url)
         else:
             logger.info("image_url supplied but SERPAPI_KEY absent — skipping lens search")
+
+    # ── Title augmentation for Google Shopping catalog URLs ───────────────────
+    # Serper India often returns "Casio Collection Watch" (the Google Shopping
+    # series name) instead of the actual merchant title. The actual model number
+    # IS embedded in the URL's `q=` parameter though. Appending it to the title
+    # lets the client-side scorer find the model token and score it correctly.
+    if model_number:
+        mn_lower = model_number.lower()
+        for item in all_listings:
+            title = item.get("title") or ""
+            url = item.get("url") or ""
+            if mn_lower not in title.lower() and "google.com" in url:
+                try:
+                    q_val = " ".join(parse_qs(urlparse(url).query).get("q", []))
+                    if mn_lower in q_val.lower():
+                        item["title"] = f"{title} {model_number}".strip()
+                        logger.info("augmented generic title for %r -> %r", url[:80], item["title"])
+                except Exception:
+                    pass
+    # ─────────────────────────────────────────────────────────────────────────
 
     # De-duplicate across all queries: shopping rows key on product_id (URLs share a base);
     # image rows key on canonical URL. Preserve order (earlier queries = more relevant).
